@@ -1,3 +1,4 @@
+import { fileTypeFromBuffer } from 'file-type';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import axios from 'axios';
 import FormData from 'form-data';
@@ -8,6 +9,14 @@ type ConfidenceLabel = 'baja' | 'media' | 'alta';
 @Injectable()
 export class DetectorService {
   async checkGenAI(file: Express.Multer.File) {
+    // Validación MIME real
+    const allowedMime = ['image/jpeg', 'image/png', 'image/webp'];
+    const detected = await fileTypeFromBuffer(file.buffer);
+    if (!detected || !allowedMime.includes(detected.mime)) {
+      throw new ServiceUnavailableException(
+        'El archivo no es una imagen válida (JPG, PNG, WebP).',
+      );
+    }
     const apiUser = process.env.SIGHTENGINE_USER;
     const apiSecret = process.env.SIGHTENGINE_SECRET;
 
@@ -41,7 +50,7 @@ export class DetectorService {
       const score = data.type?.ai_generated;
       if (typeof score !== 'number') {
         throw new ServiceUnavailableException(
-          'Respuesta inesperada de Sightengine.',
+          'Respuesta inesperada del servicio.',
         );
       }
 
