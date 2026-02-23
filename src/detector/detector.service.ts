@@ -1,5 +1,9 @@
 import { fileTypeFromBuffer } from 'file-type';
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import axios from 'axios';
 import FormData from 'form-data';
 import { SightengineGenAiResponse } from '../types';
@@ -13,7 +17,7 @@ export class DetectorService {
     const allowedMime = ['image/jpeg', 'image/png', 'image/webp'];
     const detected = await fileTypeFromBuffer(file.buffer);
     if (!detected || !allowedMime.includes(detected.mime)) {
-      throw new ServiceUnavailableException(
+      throw new BadRequestException(
         'El archivo no es una imagen válida (JPG, PNG, WebP).',
       );
     }
@@ -92,7 +96,7 @@ export class DetectorService {
         if (typeof status === 'number') {
           // Cuota / límite / demasiadas solicitudes (dependiendo de cómo responda el proveedor)
           if (status === 402 || status === 429) {
-            throw new ServiceUnavailableException(
+            throw new BadRequestException(
               'El detector alcanzó temporalmente su límite de uso. Intenta más tarde.',
             );
           }
@@ -106,7 +110,7 @@ export class DetectorService {
 
           // Archivo inválido/corrupto o request malformada al proveedor
           if (status >= 400 && status < 500) {
-            throw new ServiceUnavailableException(
+            throw new BadRequestException(
               'No se pudo procesar la imagen. Verifica que el archivo no esté dañado.',
             );
           }

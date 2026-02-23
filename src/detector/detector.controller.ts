@@ -11,6 +11,7 @@ import { memoryStorage } from 'multer';
 import { DetectorService } from './detector.service';
 import { MulterExceptionFilter } from '../common/filters/multer-exception.filter';
 import * as path from 'path';
+import { Throttle } from '@nestjs/throttler';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -21,6 +22,10 @@ export class DetectorController {
   constructor(private readonly detectorService: DetectorService) {}
 
   @Post('ai')
+  @Throttle({
+    short: { limit: 3, ttl: 60_000 },
+    daily: { limit: 10, ttl: 86_400_000 },
+  })
   @UseFilters(MulterExceptionFilter)
   @UseInterceptors(
     FileInterceptor('image', {
@@ -28,10 +33,10 @@ export class DetectorController {
       limits: { fileSize: MAX_MB * 1024 * 1024 },
       fileFilter: (_req, file, callback) => {
         const ext = path.extname(file.originalname || '').toLowerCase();
-        const isMimeAllowesd = ALLOWED.has(file.mimetype);
+        const isMimeAllowed = ALLOWED.has(file.mimetype);
         const isExtAllowed = ALLOWED_EXTENSIONS.has(ext);
 
-        if (!isMimeAllowesd || !isExtAllowed) {
+        if (!isMimeAllowed || !isExtAllowed) {
           return callback(
             new BadRequestException('Formato no soportado. Usa JPG/PNG/WebP.'),
             false,
