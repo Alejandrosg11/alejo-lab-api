@@ -31,6 +31,19 @@
 $ npm install
 ```
 
+## Security env (anti-bot)
+
+Configura estas variables para validar Turnstile en `POST /detect/ai`:
+
+```bash
+TURNSTILE_SECRET_KEY=
+TURNSTILE_VERIFY_URL=https://challenges.cloudflare.com/turnstile/v0/siteverify
+TURNSTILE_TIMEOUT_MS=7000
+BOT_TOKEN_FIELD=turnstileToken
+```
+
+El frontend debe enviar el token en el campo multipart `turnstileToken` (o el valor definido en `BOT_TOKEN_FIELD`). También se acepta por header `x-turnstile-token` o `cf-turnstile-response`.
+
 ## Compile and run the project
 
 ```bash

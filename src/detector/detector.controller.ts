@@ -1,10 +1,13 @@
 import {
   BadRequestException,
+  Body,
   Controller,
+  Headers,
   Post,
+  Req,
   UploadedFile,
-  UseInterceptors,
   UseFilters,
+  UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -12,6 +15,8 @@ import { DetectorService } from './detector.service';
 import { MulterExceptionFilter } from '../common/filters/multer-exception.filter';
 import * as path from 'path';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
+import { TurnstileService } from '../security/turnstile.service';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -19,7 +24,10 @@ const MAX_MB = Number(process.env.MAX_UPLOAD_MB || 8);
 
 @Controller('detect')
 export class DetectorController {
-  constructor(private readonly detectorService: DetectorService) {}
+  constructor(
+    private readonly detectorService: DetectorService,
+    private readonly turnstileService: TurnstileService,
+  ) {}
 
   @Post('ai')
   @Throttle({
@@ -46,11 +54,26 @@ export class DetectorController {
       },
     }),
   )
-  async detectAi(@UploadedFile() file?: Express.Multer.File) {
+  async detectAi(
+    @UploadedFile() file?: Express.Multer.File,
+    @Body() body?: Record<string, unknown>,
+    @Headers('x-turnstile-token') xTurnstileToken?: string,
+    @Headers('cf-turnstile-response') cfTurnstileResponse?: string,
+    @Req() req?: Request,
+  ) {
     if (!file) throw new BadRequestException('Falta el archivo "image".');
     if (!ALLOWED.has(file.mimetype)) {
       throw new BadRequestException('Formato no soportado. Usa JPG/PNG/WebP.');
     }
+
+    const tokenField = process.env.BOT_TOKEN_FIELD || 'turnstileToken';
+    const bodyToken =
+      body && typeof body[tokenField] === 'string'
+        ? body[tokenField]
+        : undefined;
+
+    const token = bodyToken || xTurnstileToken || cfTurnstileResponse;
+    await this.turnstileService.verifyTokenOrThrow(token, req?.ip);
 
     return this.detectorService.checkGenAI(file);
   }
