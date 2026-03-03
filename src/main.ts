@@ -7,7 +7,9 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 const defaultAllowedOrigins = [
   'https://alejodraws.com',
   'https://alejo-tools-web.vercel.app',
+  'https://alejo-tools-beta.vercel.app',
   'http://localhost:3000',
+  'http://localhost:3002',
 ];
 
 function getAllowedOrigins(): string[] {
@@ -16,11 +18,7 @@ function getAllowedOrigins(): string[] {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  if (envOrigins.length > 0) {
-    return envOrigins;
-  }
-
-  return defaultAllowedOrigins;
+  return Array.from(new Set([...defaultAllowedOrigins, ...envOrigins]));
 }
 
 async function bootstrap() {
