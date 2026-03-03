@@ -2,9 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Headers,
   Post,
   Req,
+  ServiceUnavailableException,
   UploadedFile,
   UseFilters,
   UseInterceptors,
@@ -59,8 +61,20 @@ export class DetectorController {
     @Body() body?: Record<string, unknown>,
     @Headers('x-turnstile-token') xTurnstileToken?: string,
     @Headers('cf-turnstile-response') cfTurnstileResponse?: string,
+    @Headers('x-beta-proxy-secret') betaProxySecret?: string,
     @Req() req?: Request,
   ) {
+    const expectedProxySecret = (process.env.BETA_PROXY_SECRET || '').trim();
+    if (!expectedProxySecret) {
+      throw new ServiceUnavailableException(
+        'La protección beta no está configurada.',
+      );
+    }
+
+    if ((betaProxySecret || '').trim() !== expectedProxySecret) {
+      throw new ForbiddenException('Acceso no autorizado.');
+    }
+
     if (!file) throw new BadRequestException('Falta el archivo "image".');
     if (!ALLOWED.has(file.mimetype)) {
       throw new BadRequestException('Formato no soportado. Usa JPG/PNG/WebP.');
