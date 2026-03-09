@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DetectorModule } from './detector/detector.module';
 import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
+import { AffiliateModule } from './affiliate/affiliate.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
       ],
     }),
     DetectorModule,
+    AffiliateModule,
   ],
   controllers: [AppController],
   providers: [
