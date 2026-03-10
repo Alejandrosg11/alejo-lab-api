@@ -6,9 +6,14 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 
 const defaultAllowedOrigins = [
   'https://alejodraws.com',
+  'https://www.alejodraws.com',
   'https://alejo-tools-web.vercel.app',
   'http://localhost:3000',
 ];
+
+function normalizeOrigin(origin: string): string {
+  return origin.trim().replace(/\/$/, '').toLowerCase();
+}
 
 function getAllowedOrigins(): string[] {
   const envOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
@@ -16,11 +21,13 @@ function getAllowedOrigins(): string[] {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  if (envOrigins.length > 0) {
-    return envOrigins;
-  }
-
-  return defaultAllowedOrigins;
+  return Array.from(
+    new Set(
+      [...defaultAllowedOrigins, ...envOrigins].map((origin) =>
+        normalizeOrigin(origin),
+      ),
+    ),
+  );
 }
 
 async function bootstrap() {
@@ -33,7 +40,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(normalizeOrigin(origin))) {
         callback(null, true);
         return;
       }
