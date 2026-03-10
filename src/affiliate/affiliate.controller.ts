@@ -8,7 +8,10 @@ export class AffiliateController {
 
   @Get('ugee/random')
   @SkipThrottle()
-  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, proxy-revalidate',
+  )
   getRandomUgeeAsset() {
     return this.affiliateService.getRandomUgeeAsset();
   }

@@ -10,7 +10,9 @@ export class AffiliateService {
     );
 
     if (activeAssets.length === 0) {
-      throw new ServiceUnavailableException('No hay assets de afiliado activos.');
+      throw new ServiceUnavailableException(
+        'No hay assets de afiliado activos.',
+      );
     }
 
     return this.toPublicAsset(this.pickWeightedRandom(activeAssets));
@@ -31,7 +33,7 @@ export class AffiliateService {
   }
 
   private toPublicAsset(asset: AffiliateAsset): PublicAffiliateAsset {
-    const { isActive: _isActive, weight: _weight, ...publicAsset } = asset;
+    const { ...publicAsset } = asset;
     return publicAsset;
   }
 }
