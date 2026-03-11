@@ -15,8 +15,12 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return health payload', () => {
+      const result = appController.health();
+
+      expect(result.status).toBe('ok');
+      expect(result.service).toBe('alejo-lab-api');
+      expect(typeof result.timestamp).toBe('string');
     });
   });
 });

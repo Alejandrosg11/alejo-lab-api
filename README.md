@@ -40,6 +40,9 @@ TURNSTILE_SECRET_KEY=
 TURNSTILE_VERIFY_URL=https://challenges.cloudflare.com/turnstile/v0/siteverify
 TURNSTILE_TIMEOUT_MS=7000
 BOT_TOKEN_FIELD=turnstileToken
+BOT_SESSION_HEADER=x-bot-session-token
+TURNSTILE_SESSION_SECRET=
+TURNSTILE_SESSION_TTL_MS=900000
 CORS_ALLOWED_ORIGINS=https://alejodraws.com,https://www.alejodraws.com,https://alejo-tools-web.vercel.app,http://localhost:3000
 ```
 

@@ -37,6 +37,11 @@ async function bootstrap() {
   app.set('trust proxy', 1);
 
   const allowedOrigins = getAllowedOrigins();
+  const botSessionHeaderName = (
+    process.env.BOT_SESSION_HEADER || 'x-bot-session-token'
+  )
+    .trim()
+    .toLowerCase();
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -47,6 +52,7 @@ async function bootstrap() {
 
       callback(new Error('Origen no permitido por CORS'), false);
     },
+    exposedHeaders: [botSessionHeaderName],
   });
 
   app.useGlobalFilters(
