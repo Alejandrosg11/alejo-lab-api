@@ -59,7 +59,7 @@ export const UGEE_ASSETS_CATALOG: AffiliateAsset[] = [
     brand: 'ugee',
     type: 'product',
     title: 'ugee UT2',
-    description: 'Disenada para bocetos rapidos, clases y trabajo creativo.',
+    description: 'Diseñada para bocetos rapidos, clases y trabajo creativo.',
     imageUrl:
       'https://shop.ugee.com/cdn/shop/files/UT2_1024x1024.png?v=1700000000',
     trackingUrl: 'https://shopugeecom.sjv.io/c/6930418/3268885/41544',
@@ -71,8 +71,9 @@ export const UGEE_ASSETS_CATALOG: AffiliateAsset[] = [
     id: 'ugee-storewide-5pct',
     brand: 'ugee',
     type: 'storewide',
-    title: 'Oferta UGEE 5% OFF',
-    description: 'Comision por venta total con tu enlace de afiliado.',
+    title: 'UGEE: 5% OFF',
+    description:
+      'Descubre tabletas de dibujo y aprovecha descuentos disponibles en la tienda oficial.',
     imageUrl:
       'https://shop.ugee.com/cdn/shop/files/S640bmain01-v1.jpg?v=1710752498&width=1946',
     trackingUrl: 'https://shopugeecom.sjv.io/c/6930418/3337779/41544',
