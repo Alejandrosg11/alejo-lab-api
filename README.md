@@ -27,6 +27,34 @@
 
 ## Project setup
 
+Use `npm ci` to reproduce the reviewed lockfile. The dependency maintenance work
+keeps Nest/CLI 11, Jest 30, ts-jest 29 and ESLint 9; Node.js 24 is the runtime used
+for local validation. Do not use `npm audit fix --force` to replace these tools
+with unrelated major versions or downgrade the test runner.
+
+### Dependency regression checks
+
+Run `npx tsc --noEmit`, `npx eslint "{src,apps,libs,test}/**/*.ts"`,
+`npm test -- --runInBand`, `npm run test:e2e -- --runInBand` and `npm run build`.
+The backend lint npm script uses `--fix`; the direct command above only checks.
+
+The e2e suite uses the real application, Multer, file signatures, sessions and
+request limits, with Axios providers simulated. It does not call Sightengine or
+Cloudflare. It covers `/health`, PNG analysis, session renewal/expiration,
+challenge acceptance/rejection, invalid/oversized uploads and provider failures.
+The existing rate-limit error/header contract remains a separate task (P1-02).
+
+`test/jest-e2e.json` enables the `module-sync` export condition and transforms
+only file-type's ESM dependency chain through ts-jest. This allows real file
+signature tests without changing the application's TypeScript/module settings
+or mocking file-type. Run e2e with permission to create loopback sockets.
+
+Audit both `npm audit --package-lock-only` and
+`npm audit --package-lock-only --omit=dev`. Remaining development-only advisories
+in glob/minimatch/deepmerge need separate migration decisions; the full audit is
+not expected to return zero yet. ESLint 9 is EOL; moving to a supported major is
+also deferred. These are tracked in the workspace audit, not silently waived.
+
 ```bash
 $ npm install
 ```
