@@ -21,8 +21,7 @@ export class MulterExceptionFilter implements ExceptionFilter {
       );
 
       const response = nestException.getResponse() as
-        | string
-        | { message?: string; error?: string; statusCode?: number };
+        string | { message?: string; error?: string; statusCode?: number };
 
       return res.status(nestException.getStatus()).json(
         typeof response === 'string'

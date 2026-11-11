@@ -2,8 +2,24 @@
   "moduleFileExtensions": ["js", "json", "ts"],
   "rootDir": ".",
   "testEnvironment": "node",
+  "testEnvironmentOptions": {
+    "customExportConditions": ["node", "node-addons", "module-sync"]
+  },
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
-  }
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "allowJs": true,
+          "module": "commonjs",
+          "moduleResolution": "node",
+          "resolvePackageJsonExports": false
+        }
+      }
+    ]
+  },
+  "transformIgnorePatterns": [
+    "node_modules/(?!(file-type|strtok3|token-types|@tokenizer|@borewit|peek-readable|uint8array-extras)/)"
+  ]
 }
