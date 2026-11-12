@@ -4,15 +4,30 @@ import {
   HttpStatus,
   Injectable,
 } from '@nestjs/common';
-import { ThrottlerGuard, type ThrottlerLimitDetail } from '@nestjs/throttler';
+import {
+  ThrottlerGuard,
+  type ThrottlerLimitDetail,
+  type ThrottlerRequest,
+} from '@nestjs/throttler';
 
 type SafeThrottlerMeta = {
   throttlerName: string;
-  retryAfterMs: number;
+  retryAfterMs: number | null;
 };
 
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
+  private readonly policies = new WeakMap<ExecutionContext, string>();
+
+  protected async handleRequest(props: ThrottlerRequest): Promise<boolean> {
+    this.policies.set(props.context, props.throttler.name ?? 'default');
+    try {
+      return await super.handleRequest(props);
+    } finally {
+      this.policies.delete(props.context);
+    }
+  }
+
   protected override throwThrottlingException(
     context: ExecutionContext,
     throttlerLimitDetail: ThrottlerLimitDetail,
@@ -20,20 +35,25 @@ export class AppThrottlerGuard extends ThrottlerGuard {
     const req = context.switchToHttp().getRequest<{ path?: string }>();
     const route = req?.path ?? '';
 
-    const { throttlerName, retryAfterMs } =
-      this.extractSafeThrottlerMeta(throttlerLimitDetail);
+    const { throttlerName, retryAfterMs } = this.extractSafeThrottlerMeta(
+      context,
+      throttlerLimitDetail,
+    );
 
-    const retryIn = this.formatRetryTime(retryAfterMs);
+    if (retryAfterMs !== null) {
+      const { res } = this.getRequestResponse(context);
+      this.setResponseHeader(res, 'Retry-After', retryAfterMs / 1000);
+    }
     const isDetectAi = route === '/detect/ai';
 
     let message = 'Demasiadas solicitudes. Intenta de nuevo más tarde.';
     let code = 'RATE_LIMIT_EXCEEDED';
 
     if (isDetectAi && throttlerName === 'short') {
-      message = `Demasiadas solicitudes en poco tiempo. Máximo 3 análisis por minuto. Intenta de nuevo en ${retryIn}.`;
+      message = 'Espera un momento para continuar.';
       code = 'RATE_LIMIT_SHORT';
     } else if (isDetectAi && throttlerName === 'daily') {
-      message = `Límite diario alcanzado. Máximo 10 análisis por día. Intenta de nuevo en ${retryIn}.`;
+      message = 'Alcanzaste el límite de consultas. Intenta más tarde.';
       code = 'RATE_LIMIT_DAILY';
     }
 
@@ -52,25 +72,22 @@ export class AppThrottlerGuard extends ThrottlerGuard {
     );
   }
 
-  private extractSafeThrottlerMeta(detail: unknown): SafeThrottlerMeta {
-    let throttlerName = 'default';
-    let retryAfterMs = 0;
+  private extractSafeThrottlerMeta(
+    context: ExecutionContext,
+    detail: unknown,
+  ): SafeThrottlerMeta {
+    const throttlerName = this.policies.get(context) ?? 'default';
+    let retryAfterMs: number | null = null;
 
     if (this.isRecord(detail)) {
-      const maybeTimeToExpire = detail['timeToExpire'];
+      // Throttler v6 reports remaining BLOCK seconds, not window milliseconds.
+      const maybeTimeToExpire = detail['timeToBlockExpire'];
       if (
         typeof maybeTimeToExpire === 'number' &&
-        Number.isFinite(maybeTimeToExpire)
+        Number.isFinite(maybeTimeToExpire) &&
+        maybeTimeToExpire > 0
       ) {
-        retryAfterMs = Math.max(0, maybeTimeToExpire);
-      }
-
-      const maybeThrottler = detail['throttler'];
-      if (this.isRecord(maybeThrottler)) {
-        const maybeName = maybeThrottler['name'];
-        if (typeof maybeName === 'string' && maybeName.trim()) {
-          throttlerName = maybeName;
-        }
+        retryAfterMs = Math.ceil(maybeTimeToExpire) * 1000;
       }
     }
 
@@ -79,16 +96,5 @@ export class AppThrottlerGuard extends ThrottlerGuard {
 
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
-  }
-
-  private formatRetryTime(ms: number): string {
-    const s = Math.max(1, Math.ceil(ms / 1000));
-    if (s < 60) return `${s}s`;
-
-    const m = Math.ceil(s / 60);
-    if (m < 60) return `${m} min`;
-
-    const h = Math.ceil(m / 60);
-    return `${h} h`;
   }
 }

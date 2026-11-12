@@ -138,6 +138,25 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 - Website - [https://nestjs.com](https://nestjs.com/)
 - Twitter - [@nestframework](https://twitter.com/nestframework)
 
+## Contrato de límites (P1-02)
+
+`POST /detect/ai` responde HTTP 429 con `code` (`RATE_LIMIT_SHORT`,
+`RATE_LIMIT_DAILY` o `RATE_LIMIT_EXCEEDED`), `throttler` y `retryAfterMs`.
+La duración es el tiempo restante del bloqueo en **milisegundos**, calculado
+desde `timeToBlockExpire` de Throttler, no desde el vencimiento de la ventana.
+Si no hay una duración válida, `retryAfterMs` es `null`.
+
+`Retry-After` usa **segundos**. Se conservan los encabezados con sufijo de
+Throttler; CORS expone los tres y el encabezado configurado de sesión. Los
+orígenes permitidos y la política de cuotas no cambian. Las cuotas cuentan
+solicitudes por IP/ruta en memoria del proceso, no análisis exitosos ni cuentas
+personales; no se presupone reinicio diario a medianoche.
+
+La suite HTTP usa la misma función `configureCors` que el arranque real y
+prueba bloqueo corto, diario, tiempo restante, recuperación y preflight con
+proveedores simulados. Las unitarias prueban aislamiento de solicitudes
+concurrentes y duración desconocida; no consumen cuota externa.
+
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
