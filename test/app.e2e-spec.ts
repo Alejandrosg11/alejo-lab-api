@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import { TurnstileService } from '../src/security/turnstile.service';
 import { MulterExceptionFilter } from '../src/common/filters/multer-exception.filter';
 import { PayloadTooLargeExceptionFilter } from '../src/common/filters/payload-too-large-exception.filter';
+import { configureCors } from '../src/common/configure-cors';
 
 // Use real Nest, Express, Multer, file signatures, sessions and throttling.
 // Only external providers are mocked; tests never consume analysis quota.
@@ -47,10 +48,7 @@ describe('API dependency integration', () => {
       new MulterExceptionFilter(),
       new PayloadTooLargeExceptionFilter(),
     );
-    app.enableCors({
-      origin: 'http://localhost:3000',
-      exposedHeaders: [sessionHeader],
-    });
+    configureCors(app);
     await app.init();
     sessions = app.get(TurnstileService);
   });
@@ -226,6 +224,8 @@ describe('API dependency integration', () => {
   });
 
   it('preserves the three requests per minute limit without further provider calls', async () => {
+    const now = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
     post.mockResolvedValue({ data: sightengine });
     for (let i = 0; i < 3; i++) {
       await upload()
@@ -235,13 +235,83 @@ describe('API dependency integration', () => {
         })
         .expect(201);
     }
-    await upload()
-      .attach('image', png, {
-        filename: 'fixture.png',
-        contentType: 'image/png',
-      })
+    // The window has one second left, but a new block lasts a full minute.
+    clock.mockReturnValue(now + 59000);
+    const firstBlock = await upload()
+      .attach('image', png, 'fixture.png')
       .expect(429);
+    expect(firstBlock.body).toMatchObject({
+      code: 'RATE_LIMIT_SHORT',
+      retryAfterMs: 60000,
+    });
     expect(post).toHaveBeenCalledTimes(3);
-    // Header names/units and the short/daily error contract remain P1-02.
+    clock.mockReturnValue(now + 89000);
+    const blocked = await upload()
+      .set('Origin', 'http://localhost:3000')
+      .attach('image', png, 'fixture.png')
+      .expect(429);
+    expect(blocked.body).toMatchObject({
+      code: 'RATE_LIMIT_SHORT',
+      throttler: 'short',
+      retryAfterMs: 30000,
+    });
+    expect(blocked.headers['retry-after']).toBe('30');
+    expect(blocked.headers['retry-after-short']).toBe('30');
+    expect(blocked.headers['access-control-allow-origin']).toBe(
+      'http://localhost:3000',
+    );
+    expect(
+      blocked.headers['access-control-expose-headers'].toLowerCase(),
+    ).toContain('retry-after');
+    expect(JSON.stringify(blocked.body)).not.toContain('3 análisis');
+    expect(post).toHaveBeenCalledTimes(3);
+    clock.mockReturnValue(now + 119001);
+    await upload().attach('image', png, 'fixture.png').expect(201);
+    expect(post).toHaveBeenCalledTimes(4);
+  });
+
+  it('reports the daily policy and remaining block rather than the original window', async () => {
+    let now = Date.now();
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    post.mockResolvedValue({ data: sightengine });
+    for (let i = 0; i < 10; i++) {
+      now += 61000;
+      await upload().attach('image', png, 'fixture.png').expect(201);
+    }
+    now += 61000;
+    const response = await upload()
+      .set('Origin', 'http://localhost:3000')
+      .attach('image', png, 'fixture.png')
+      .expect(429);
+    expect(response.body).toMatchObject({
+      code: 'RATE_LIMIT_DAILY',
+      throttler: 'daily',
+      retryAfterMs: 86400000,
+    });
+    expect(response.headers['retry-after']).toBe('86400');
+    expect(response.headers['retry-after-daily']).toBe('86400');
+    expect(
+      response.headers['access-control-expose-headers'].toLowerCase(),
+    ).toContain('retry-after-daily');
+    now += 30000;
+    const retry = await upload()
+      .attach('image', png, 'fixture.png')
+      .expect(429);
+    expect(retry.body).toMatchObject({
+      code: 'RATE_LIMIT_DAILY',
+      retryAfterMs: 86370000,
+    });
+    expect(post).toHaveBeenCalledTimes(10);
+  });
+
+  it('allows the browser preflight with the configured session header', async () => {
+    await request(app.getHttpServer())
+      .options('/detect/ai')
+      .set('Origin', 'http://localhost:3000')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', sessionHeader)
+      .expect('Access-Control-Allow-Origin', 'http://localhost:3000')
+      .expect(204);
+    expect(post).not.toHaveBeenCalled();
   });
 });
