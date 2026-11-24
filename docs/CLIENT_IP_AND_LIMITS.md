@@ -14,15 +14,19 @@ verification/session binding:
   edge's `X-Real-IP` address. Railway metadata never grants that trust.
 - `CLIENT_IP_SOURCE=socket` uses the TCP socket address and ignores forwarding
   headers. This is the default outside Railway, suitable for localhost/direct HTTP.
-- On Railway, the operator must configure the mode explicitly. Missing/invalid
+- If any Railway identity metadata exists (project, environment or service, even
+  empty/partial/malformed), the operator must configure the mode explicitly. It
+  never authenticates ingress. Missing/invalid
   configuration fails startup before readiness; it never silently trusts headers
   or groups all public callers into a shared socket bucket.
 - Enable edge mode only after verifying the network boundary below. A setting is
   an operational trust decision, **not per-request authentication**. If untrusted
   private/TCP access cannot be excluded, do not enable this mode or release this
   candidate: first restrict ingress or add authenticated origin protection.
-- An invalid mode, absent edge address, list/duplicate or malformed address fails
-  closed with 503 before provider calls. `/health` remains exempt from throttling
+- An invalid mode fails startup before the server listens; no HTTP response is
+  available in that case. At request time, an absent edge address, list/duplicate
+  or malformed address fails closed with 503 before provider calls.
+  `/health` remains exempt from throttling
   for platform healthchecks that may not supply edge headers.
 - Security decisions never use `req.ip`, `X-Forwarded-For` or `CF-Connecting-IP`
   directly. Express retains its previous proxy metadata setting for protocol and

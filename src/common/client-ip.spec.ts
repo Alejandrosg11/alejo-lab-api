@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { resolveClientIp } from './client-ip';
+import { resolveClientIp, validateClientIpConfiguration } from './client-ip';
 
 describe('client security identity', () => {
   const env = { ...process.env };
@@ -72,6 +72,40 @@ describe('client security identity', () => {
     process.env.CLIENT_IP_SOURCE = 'socket';
     expect(resolveClientIp(req({ 'x-real-ip': '203.0.113.1' }))).toBe(
       '192.0.2.1',
+    );
+  });
+  it.each([
+    ['RAILWAY_PROJECT_ID', ''],
+    ['RAILWAY_ENVIRONMENT_ID', 'fixture'],
+    ['RAILWAY_SERVICE_ID', 'malformed'],
+  ])(
+    'requires an explicit source with partial metadata %s=%j',
+    (key, value) => {
+      delete process.env.CLIENT_IP_SOURCE;
+      delete process.env.RAILWAY_PROJECT_ID;
+      delete process.env.RAILWAY_ENVIRONMENT_ID;
+      delete process.env.RAILWAY_SERVICE_ID;
+      process.env[key] = value;
+      expect(() => validateClientIpConfiguration()).toThrow(
+        'La identificación del cliente',
+      );
+      process.env.CLIENT_IP_SOURCE = 'socket';
+      expect(validateClientIpConfiguration()).toBe('socket');
+      process.env.CLIENT_IP_SOURCE = 'railway-edge';
+      expect(validateClientIpConfiguration()).toBe('railway-edge');
+    },
+  );
+  it('defaults to socket only when no Railway identity metadata exists', () => {
+    delete process.env.CLIENT_IP_SOURCE;
+    delete process.env.RAILWAY_PROJECT_ID;
+    delete process.env.RAILWAY_ENVIRONMENT_ID;
+    delete process.env.RAILWAY_SERVICE_ID;
+    expect(validateClientIpConfiguration()).toBe('socket');
+  });
+  it('rejects an invalid explicit source during startup validation', () => {
+    process.env.CLIENT_IP_SOURCE = 'unknown';
+    expect(() => validateClientIpConfiguration()).toThrow(
+      'La identificación del cliente',
     );
   });
 });
