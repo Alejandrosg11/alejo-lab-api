@@ -18,6 +18,7 @@ import * as path from 'path';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { TurnstileService } from '../security/turnstile.service';
+import { recordRequestCategory } from '../common/request-audit';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -81,6 +82,7 @@ export class DetectorController {
     @Req() req?: Request,
     @Res({ passthrough: true }) res?: Response,
   ) {
+    recordRequestCategory('validation');
     if (!file) throw new BadRequestException('Falta el archivo "image".');
     if (!ALLOWED.has(file.mimetype)) {
       throw new BadRequestException('Formato no soportado. Usa JPG/PNG/WebP.');

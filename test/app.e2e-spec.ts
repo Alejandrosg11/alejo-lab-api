@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Jest mocked Axios methods do not use a receiver. */
 import { Test } from '@nestjs/testing';
-import type { INestApplication } from '@nestjs/common';
+import { Logger, type INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import axios from 'axios';
@@ -9,6 +9,7 @@ import { TurnstileService } from '../src/security/turnstile.service';
 import { MulterExceptionFilter } from '../src/common/filters/multer-exception.filter';
 import { PayloadTooLargeExceptionFilter } from '../src/common/filters/payload-too-large-exception.filter';
 import { configureCors } from '../src/common/configure-cors';
+import { configureRequestAudit } from '../src/common/request-audit';
 
 // Use real Nest, Express, Multer, file signatures, sessions and throttling.
 // Only external providers are mocked; tests never consume analysis quota.
@@ -30,9 +31,22 @@ const sightengine = {
 describe('API dependency integration', () => {
   let app: INestApplication<App>;
   let sessions: TurnstileService;
+  let auditLog: jest.SpyInstance;
+
+  function auditEvents(): Record<string, unknown>[] {
+    return auditLog.mock.calls.flatMap(([message]: [unknown]) =>
+      typeof message === 'string' && message.startsWith('{"event":')
+        ? [JSON.parse(message) as Record<string, unknown>]
+        : [],
+    );
+  }
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    auditLog = jest
+      .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => undefined);
+    process.env.APP_ENV = 'test';
     process.env.TURNSTILE_SECRET_KEY = 'e2e-provider-secret';
     process.env.TURNSTILE_SESSION_SECRET = 'e2e-local-session-secret';
     process.env.TURNSTILE_SESSION_TTL_MS = '60000';
@@ -44,6 +58,7 @@ describe('API dependency integration', () => {
       imports: [AppModule],
     }).compile();
     app = moduleFixture.createNestApplication();
+    configureRequestAudit(app);
     app.useGlobalFilters(
       new MulterExceptionFilter(),
       new PayloadTooLargeExceptionFilter(),
@@ -75,6 +90,183 @@ describe('API dependency integration', () => {
       service: 'alejo-lab-api',
     });
     expect(post).not.toHaveBeenCalled();
+    expect(response.headers['x-request-id']).toMatch(/^[a-f0-9-]{36}$/);
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({
+        route: '/health',
+        status: 200,
+        environment: 'test',
+        requestId: response.headers['x-request-id'],
+        category: 'http_success',
+      }),
+    ]);
+  });
+
+  it.each([
+    ['staging', 'staging'],
+    ['production', 'production'],
+    ['unexpected-private-label', 'unknown'],
+    [undefined, 'unknown'],
+  ])(
+    'identifies production-mode environments without assuming production: %s',
+    async (railwayEnvironment, expected) => {
+      delete process.env.APP_ENV;
+      process.env.NODE_ENV = 'production';
+      if (railwayEnvironment)
+        process.env.RAILWAY_ENVIRONMENT_NAME = railwayEnvironment;
+      else delete process.env.RAILWAY_ENVIRONMENT_NAME;
+      await request(app.getHttpServer()).get('/health').expect(200);
+      expect(auditEvents()[0]).toMatchObject({ environment: expected });
+      expect(JSON.stringify(auditEvents())).not.toContain(
+        'unexpected-private-label',
+      );
+    },
+  );
+
+  it.each(['POST', 'OPTIONS'])(
+    'rejects a disallowed origin on %s with 403 before providers',
+    async (method) => {
+      const client = request(app.getHttpServer());
+      const call =
+        method === 'POST'
+          ? client.post('/detect/ai')
+          : client.options('/detect/ai');
+      const response = await call
+        .set('Origin', 'https://untrusted.example')
+        .set('Access-Control-Request-Method', 'POST')
+        .expect(403);
+      expect(response.body).toMatchObject({
+        code: 'CORS_ORIGIN_DENIED',
+        statusCode: 403,
+      });
+      expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      expect(post).not.toHaveBeenCalled();
+      expect(auditEvents()).toEqual([
+        expect.objectContaining({ category: 'cors_denied', status: 403 }),
+      ]);
+    },
+  );
+
+  it('preserves the configured QA origin and exposed request/session headers', async () => {
+    await app.close();
+    process.env.CORS_ALLOWED_ORIGINS = 'https://qa.example';
+    const fixture = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = fixture.createNestApplication();
+    configureRequestAudit(app);
+    configureCors(app);
+    await app.init();
+    const response = await request(app.getHttpServer())
+      .options('/detect/ai')
+      .set('Origin', 'https://qa.example')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', sessionHeader)
+      .expect(204);
+    expect(response.headers['access-control-allow-origin']).toBe(
+      'https://qa.example',
+    );
+    for (const header of [
+      'x-request-id',
+      sessionHeader,
+      'retry-after',
+      'retry-after-short',
+      'retry-after-daily',
+    ]) {
+      expect(
+        response.headers['access-control-expose-headers'].toLowerCase(),
+      ).toContain(header);
+    }
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('logs canonical routes and server-generated IDs without request secrets', async () => {
+    const sentinel = 'PRIVATE_SENTINEL_DO_NOT_LOG';
+    const response = await request(app.getHttpServer())
+      .post(`/detect/ai?key=${sentinel}`)
+      .set('X-Request-ID', sentinel)
+      .set('User-Agent', sentinel)
+      .set('x-turnstile-token', sentinel)
+      .expect(400);
+    await request(app.getHttpServer()).get(`/unknown/${sentinel}`).expect(404);
+    expect(response.headers['x-request-id']).not.toBe(sentinel);
+    expect(auditEvents()).toHaveLength(2);
+    expect(auditEvents()[0]).toMatchObject({
+      category: 'validation',
+      route: '/detect/ai',
+    });
+    expect(auditEvents()[1]).toMatchObject({ route: 'other' });
+    expect(JSON.stringify(auditEvents())).not.toContain(sentinel);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('keeps provider metadata isolated between concurrent requests', async () => {
+    post.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { data: sightengine };
+    });
+    const [success, missing] = await Promise.all([
+      upload().attach('image', png, {
+        filename: 'secret-filename.png',
+        contentType: 'image/png',
+      }),
+      request(app.getHttpServer()).post('/detect/ai'),
+    ]);
+    expect(success.status).toBe(201);
+    expect(missing.status).toBe(400);
+    expect(auditEvents()).toHaveLength(2);
+    expect(
+      auditEvents().find(
+        (event) => event.requestId === success.headers['x-request-id'],
+      ),
+    ).toMatchObject({
+      category: 'analysis_success',
+      providerRequestId: 'simulated-analysis',
+      operations: 5,
+    });
+    const rejected = auditEvents().find(
+      (event) => event.requestId === missing.headers['x-request-id'],
+    );
+    expect(rejected).toMatchObject({ category: 'validation' });
+    expect(rejected).not.toHaveProperty('providerRequestId');
+    expect(rejected).not.toHaveProperty('operations');
+    expect(JSON.stringify(auditEvents())).not.toContain('secret-filename');
+  });
+
+  it.each([
+    [{ code: 'ECONNABORTED' }, 503, 'sightengine_timeout'],
+    [{ code: 'ECONNRESET' }, 503, 'sightengine_network'],
+    [{ response: { status: 429 } }, 400, 'sightengine_quota'],
+    [{ response: { status: 401 } }, 503, 'sightengine_auth'],
+    [{ response: { status: 502 } }, 503, 'sightengine_http_error'],
+  ])(
+    'classifies a provider failure without logging its error body: %j',
+    async (error, status, category) => {
+      jest.mocked(axios.isAxiosError).mockReturnValue(true);
+      post.mockRejectedValueOnce({
+        ...error,
+        config: { api_secret: 'PRIVATE_PROVIDER_SECRET' },
+      });
+      await upload().attach('image', png, 'fixture.png').expect(status);
+      expect(auditEvents()).toEqual([
+        expect.objectContaining({ category, status }),
+      ]);
+      expect(JSON.stringify(auditEvents())).not.toContain(
+        'PRIVATE_PROVIDER_SECRET',
+      );
+    },
+  );
+
+  it('distinguishes a malformed provider response and drops unsafe metadata', async () => {
+    post.mockResolvedValueOnce({
+      data: { request: { id: 'SECRET\nINJECTION', operations: -5 } },
+    });
+    await upload().attach('image', png, 'fixture.png').expect(503);
+    expect(auditEvents()[0]).toMatchObject({
+      category: 'sightengine_invalid_response',
+    });
+    expect(auditEvents()[0]).not.toHaveProperty('providerRequestId');
+    expect(auditEvents()[0]).not.toHaveProperty('operations');
   });
 
   it('analyzes a real PNG signature with a saved session and refreshes it', async () => {
@@ -192,7 +384,21 @@ describe('API dependency integration', () => {
       })
       .expect(403);
     expect((response.body as { code: string }).code).toBe('TOKEN_INVALID');
+    expect(auditEvents()[0]).toMatchObject({ category: 'turnstile_invalid' });
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes a Turnstile timeout before any analysis call', async () => {
+    jest.mocked(axios.isAxiosError).mockReturnValue(true);
+    post.mockRejectedValueOnce({ code: 'ECONNABORTED' });
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .field('turnstileToken', 'private-token')
+      .attach('image', png, 'fixture.png')
+      .expect(503);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(auditEvents()[0]).toMatchObject({ category: 'turnstile_timeout' });
+    expect(JSON.stringify(auditEvents())).not.toContain('private-token');
   });
 
   it('reports a simulated verification provider outage without analyzing', async () => {
@@ -244,6 +450,10 @@ describe('API dependency integration', () => {
       code: 'RATE_LIMIT_SHORT',
       retryAfterMs: 60000,
     });
+    expect(auditEvents().at(-1)).toMatchObject({
+      category: 'rate_limit_short',
+      status: 429,
+    });
     expect(post).toHaveBeenCalledTimes(3);
     clock.mockReturnValue(now + 89000);
     const blocked = await upload()
@@ -287,6 +497,10 @@ describe('API dependency integration', () => {
       code: 'RATE_LIMIT_DAILY',
       throttler: 'daily',
       retryAfterMs: 86400000,
+    });
+    expect(auditEvents().at(-1)).toMatchObject({
+      category: 'rate_limit_daily',
+      status: 429,
     });
     expect(response.headers['retry-after']).toBe('86400');
     expect(response.headers['retry-after-daily']).toBe('86400');
