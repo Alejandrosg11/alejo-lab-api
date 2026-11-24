@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { recordRequestCategory } from '../common/request-audit';
 
 type TurnstileVerifyResponse = {
   success?: boolean;
@@ -160,6 +161,7 @@ export class TurnstileService {
 
   async verifyTokenOrThrow(token: string | undefined, remoteIp?: string) {
     if (!token || !token.trim()) {
+      recordRequestCategory('turnstile_missing');
       throw new BadRequestException({
         statusCode: 400,
         error: 'Bad Request',
@@ -170,6 +172,7 @@ export class TurnstileService {
 
     const secret = process.env.TURNSTILE_SECRET_KEY;
     if (!secret) {
+      recordRequestCategory('turnstile_configuration');
       throw new ServiceUnavailableException({
         statusCode: 503,
         error: 'Service Unavailable',
@@ -199,6 +202,7 @@ export class TurnstileService {
 
       const isValid = response.data?.success === true;
       if (!isValid) {
+        recordRequestCategory('turnstile_invalid');
         throw new ForbiddenException({
           statusCode: 403,
           error: 'Forbidden',
@@ -213,6 +217,13 @@ export class TurnstileService {
       if (error instanceof ServiceUnavailableException) throw error;
 
       if (axios.isAxiosError(error)) {
+        recordRequestCategory(
+          error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
+            ? 'turnstile_timeout'
+            : error.response
+              ? 'turnstile_http_error'
+              : 'turnstile_network',
+        );
         throw new ServiceUnavailableException({
           statusCode: 503,
           error: 'Service Unavailable',
@@ -221,6 +232,7 @@ export class TurnstileService {
         });
       }
 
+      recordRequestCategory('turnstile_unavailable');
       throw new ServiceUnavailableException({
         statusCode: 503,
         error: 'Service Unavailable',

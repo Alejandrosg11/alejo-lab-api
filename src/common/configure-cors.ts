@@ -1,4 +1,5 @@
-import type { INestApplication } from '@nestjs/common';
+import { ForbiddenException, type INestApplication } from '@nestjs/common';
+import { recordRequestCategory } from './request-audit';
 
 const defaultAllowedOrigins = [
   'https://alejodraws.com',
@@ -32,9 +33,19 @@ export function configureCors(app: INestApplication): void {
         callback(null, true);
         return;
       }
-      callback(new Error('Origen no permitido por CORS'), false);
+      recordRequestCategory('cors_denied');
+      callback(
+        new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          code: 'CORS_ORIGIN_DENIED',
+          message: 'Origen no permitido por CORS',
+        }),
+        false,
+      );
     },
     exposedHeaders: [
+      'X-Request-ID',
       sessionHeader,
       'Retry-After',
       'Retry-After-short',
