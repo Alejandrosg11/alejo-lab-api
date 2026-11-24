@@ -9,7 +9,8 @@ import { configureRequestAudit } from './common/request-audit';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // Railway / reverse proxy
+  // Used by Express for protocol/host metadata, not client security identity.
+  // Limits and Turnstile use the explicit public-edge/socket resolver instead.
   app.set('trust proxy', 1);
 
   configureRequestAudit(app);

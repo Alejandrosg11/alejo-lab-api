@@ -6,10 +6,13 @@ import {
 } from '@nestjs/common';
 import {
   ThrottlerGuard,
+  normalizeIp,
   type ThrottlerLimitDetail,
   type ThrottlerRequest,
 } from '@nestjs/throttler';
 import { recordRequestCategory } from '../request-audit';
+import { resolveClientIp } from '../client-ip';
+import type { Request } from 'express';
 
 type SafeThrottlerMeta = {
   throttlerName: string;
@@ -18,6 +21,12 @@ type SafeThrottlerMeta = {
 
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
+  protected override getTracker(req: Request): Promise<string> {
+    return Promise.resolve(
+      normalizeIp(resolveClientIp(req), this.ipv6SubnetPrefix),
+    );
+  }
+
   private readonly policies = new WeakMap<ExecutionContext, string>();
 
   protected async handleRequest(props: ThrottlerRequest): Promise<boolean> {
