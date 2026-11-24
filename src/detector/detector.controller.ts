@@ -19,6 +19,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { TurnstileService } from '../security/turnstile.service';
 import { recordRequestCategory } from '../common/request-audit';
+import { resolveClientIp } from '../common/client-ip';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -103,18 +104,19 @@ export class DetectorController {
       ? rawSessionHeader[0]
       : rawSessionHeader;
 
+    const clientIp = req ? resolveClientIp(req) : undefined;
     const hasTrustedSession = turnstile.verifySessionToken(
       sessionToken,
-      req?.ip,
+      clientIp,
       userAgent,
     );
 
     if (!hasTrustedSession) {
-      await turnstile.verifyTokenOrThrow(token, req?.ip);
+      await turnstile.verifyTokenOrThrow(token, clientIp);
     }
 
     const refreshedSessionToken = turnstile.createSessionToken(
-      req?.ip,
+      clientIp,
       userAgent,
     );
 
