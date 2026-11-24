@@ -47,6 +47,7 @@ describe('API dependency integration', () => {
       .spyOn(Logger.prototype, 'log')
       .mockImplementation(() => undefined);
     process.env.APP_ENV = 'test';
+    process.env.CLIENT_IP_SOURCE = 'socket';
     process.env.TURNSTILE_SECRET_KEY = 'e2e-provider-secret';
     process.env.TURNSTILE_SESSION_SECRET = 'e2e-local-session-secret';
     process.env.TURNSTILE_SESSION_TTL_MS = '60000';
@@ -100,6 +101,129 @@ describe('API dependency integration', () => {
         category: 'http_success',
       }),
     ]);
+  });
+
+  it('keeps one edge client bucket despite changing forwarded chains and isolates another client', async () => {
+    process.env.CLIENT_IP_SOURCE = 'railway-edge';
+    for (let i = 0; i < 3; i++) {
+      const response = await request(app.getHttpServer())
+        .post('/detect/ai')
+        .set('X-Real-IP', '198.51.100.10')
+        .set('X-Forwarded-For', `203.0.113.${i + 1}, 192.0.2.${i + 1}`)
+        .set('CF-Connecting-IP', `203.0.113.${i + 10}`)
+        .expect(400);
+      expect(response.headers['x-ratelimit-remaining-short']).toBe(
+        String(2 - i),
+      );
+    }
+    const blocked = await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Real-IP', '198.51.100.10')
+      .set('X-Forwarded-For', '203.0.113.99')
+      .set('CF-Connecting-IP', '203.0.113.100')
+      .expect(429);
+    expect(blocked.body).toMatchObject({ code: 'RATE_LIMIT_SHORT' });
+    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Real-IP', '198.51.100.11')
+      .expect(400);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('does not trust IP headers on local/direct socket mode', async () => {
+    for (let i = 0; i < 3; i++) {
+      await request(app.getHttpServer())
+        .post('/detect/ai')
+        .set('X-Real-IP', `203.0.113.${i + 1}`)
+        .set('X-Forwarded-For', `192.0.2.${i + 1}`)
+        .set('CF-Connecting-IP', `198.51.100.${i + 1}`)
+        .expect(400);
+    }
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Real-IP', '203.0.113.99')
+      .expect(429);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('groups IPv6 clients by /64 for throttling while isolating another subnet', async () => {
+    process.env.CLIENT_IP_SOURCE = 'railway-edge';
+    for (let i = 1; i <= 3; i++) {
+      await request(app.getHttpServer())
+        .post('/detect/ai')
+        .set('X-Real-IP', `2001:db8:1:1::${i}`)
+        .expect(400);
+    }
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Real-IP', '2001:db8:1:1::99')
+      .expect(429);
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Real-IP', '2001:db8:1:2::1')
+      .expect(400);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('uses the same authoritative address for session verification and renewal', async () => {
+    process.env.CLIENT_IP_SOURCE = 'railway-edge';
+    const ip = '198.51.100.10';
+    const saved = sessions.createSessionToken(ip, agent);
+    post.mockResolvedValueOnce({ data: sightengine });
+    const response = await upload(saved)
+      .set('X-Real-IP', ip)
+      .set('CF-Connecting-IP', '203.0.113.77')
+      .set('X-Forwarded-For', '203.0.113.88')
+      .attach('image', png, 'fixture.png')
+      .expect(201);
+    expect(
+      sessions.verifySessionToken(response.headers[sessionHeader], ip, agent),
+    ).toBe(true);
+    expect(
+      sessions.verifySessionToken(
+        response.headers[sessionHeader],
+        '198.51.100.11',
+        agent,
+      ),
+    ).toBe(false);
+    expect(post).toHaveBeenCalledTimes(1);
+    const denied = await upload(saved)
+      .set('X-Real-IP', '198.51.100.11')
+      .attach('image', png, 'fixture.png')
+      .expect(400);
+    expect(denied.body).toMatchObject({ code: 'TOKEN_MISSING' });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the authoritative address to Turnstile remoteip', async () => {
+    process.env.CLIENT_IP_SOURCE = 'railway-edge';
+    post
+      .mockResolvedValueOnce({ data: { success: true } })
+      .mockResolvedValueOnce({ data: sightengine });
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Real-IP', '198.51.100.10')
+      .set('CF-Connecting-IP', '203.0.113.77')
+      .field('turnstileToken', 'test-token')
+      .attach('image', png, 'fixture.png')
+      .expect(201);
+    expect(
+      new URLSearchParams(String(post.mock.calls[0][1])).get('remoteip'),
+    ).toBe('198.51.100.10');
+  });
+
+  it('fails closed for missing edge identity while keeping health available', async () => {
+    process.env.CLIENT_IP_SOURCE = 'railway-edge';
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('X-Forwarded-For', '203.0.113.1')
+      .expect(503);
+    expect(auditEvents()[0]).toMatchObject({
+      category: 'client_ip_unavailable',
+    });
+    expect(post).not.toHaveBeenCalled();
+    await request(app.getHttpServer()).get('/health').expect(200);
   });
 
   it.each([

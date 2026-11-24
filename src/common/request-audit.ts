@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import type { NextFunction, Request, Response } from 'express';
 
 type Category =
+  | 'client_ip_unavailable'
   | 'cors_denied'
   | 'validation'
   | 'rate_limit_short'
