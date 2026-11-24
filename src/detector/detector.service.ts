@@ -7,6 +7,10 @@ import {
 import axios from 'axios';
 import FormData from 'form-data';
 import { SightengineGenAiResponse } from '../types';
+import {
+  recordProviderUsage,
+  recordRequestCategory,
+} from '../common/request-audit';
 
 type ConfidenceLabel = 'baja' | 'media' | 'alta';
 
@@ -17,6 +21,7 @@ export class DetectorService {
     const allowedMime = ['image/jpeg', 'image/png', 'image/webp'];
     const detected = await fileTypeFromBuffer(file.buffer);
     if (!detected || !allowedMime.includes(detected.mime)) {
+      recordRequestCategory('validation');
       throw new BadRequestException(
         'El archivo no es una imagen válida (JPG, PNG, WebP).',
       );
@@ -25,6 +30,7 @@ export class DetectorService {
     const apiSecret = process.env.SIGHTENGINE_SECRET;
 
     if (!apiUser || !apiSecret) {
+      recordRequestCategory('sightengine_configuration');
       throw new ServiceUnavailableException(
         'Faltan credenciales de Sightengine.',
       );
@@ -51,14 +57,17 @@ export class DetectorService {
       );
 
       const data: SightengineGenAiResponse = response.data;
-      const score = data.type?.ai_generated;
+      recordProviderUsage(data?.request?.id, data?.request?.operations);
+      const score = data?.type?.ai_generated;
       if (typeof score !== 'number') {
+        recordRequestCategory('sightengine_invalid_response');
         throw new ServiceUnavailableException(
           'Respuesta inesperada del servicio.',
         );
       }
 
       const { label, message } = this.buildHumanResult(score);
+      recordRequestCategory('analysis_success');
 
       return {
         result: {
@@ -82,9 +91,11 @@ export class DetectorService {
           'Resultado probabilístico. Úsalo como señal, no como sentencia.',
       };
     } catch (error: unknown) {
+      if (error instanceof ServiceUnavailableException) throw error;
       if (axios.isAxiosError(error)) {
         // Timeout
-        if (error.code === 'ECONNABORTED') {
+        if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+          recordRequestCategory('sightengine_timeout');
           throw new ServiceUnavailableException(
             'El servicio de análisis tardó demasiado en responder. Intenta de nuevo.',
           );
@@ -96,6 +107,7 @@ export class DetectorService {
         if (typeof status === 'number') {
           // Cuota / límite / demasiadas solicitudes (dependiendo de cómo responda el proveedor)
           if (status === 402 || status === 429) {
+            recordRequestCategory('sightengine_quota');
             throw new BadRequestException(
               'El detector alcanzó temporalmente su límite de uso. Intenta más tarde.',
             );
@@ -103,6 +115,7 @@ export class DetectorService {
 
           // Credenciales inválidas / auth del proveedor
           if (status === 401 || status === 403) {
+            recordRequestCategory('sightengine_auth');
             throw new ServiceUnavailableException(
               'El servicio no está disponible en este momento.',
             );
@@ -110,6 +123,7 @@ export class DetectorService {
 
           // Archivo inválido/corrupto o request malformada al proveedor
           if (status >= 400 && status < 500) {
+            recordRequestCategory('sightengine_http_error');
             throw new BadRequestException(
               'No se pudo procesar la imagen. Verifica que el archivo no esté dañado.',
             );
@@ -117,6 +131,7 @@ export class DetectorService {
 
           // Error del proveedor
           if (status >= 500) {
+            recordRequestCategory('sightengine_http_error');
             throw new ServiceUnavailableException(
               'El servicio de análisis no está disponible en este momento. Intenta más tarde.',
             );
@@ -125,16 +140,19 @@ export class DetectorService {
 
         // Error de red / sin respuesta del proveedor
         if (!error.response) {
+          recordRequestCategory('sightengine_network');
           throw new ServiceUnavailableException(
             'No se pudo conectar con el servicio de análisis. Intenta de nuevo.',
           );
         }
 
         // Fallback axios
+        recordRequestCategory('sightengine_unavailable');
         throw new ServiceUnavailableException('No se pudo analizar la imagen.');
       }
 
       // Fallback general
+      recordRequestCategory('sightengine_unavailable');
       throw new ServiceUnavailableException('No se pudo analizar la imagen.');
     }
   }

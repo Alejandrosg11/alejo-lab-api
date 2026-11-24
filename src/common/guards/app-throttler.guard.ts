@@ -9,6 +9,7 @@ import {
   type ThrottlerLimitDetail,
   type ThrottlerRequest,
 } from '@nestjs/throttler';
+import { recordRequestCategory } from '../request-audit';
 
 type SafeThrottlerMeta = {
   throttlerName: string;
@@ -45,6 +46,13 @@ export class AppThrottlerGuard extends ThrottlerGuard {
       this.setResponseHeader(res, 'Retry-After', retryAfterMs / 1000);
     }
     const isDetectAi = route === '/detect/ai';
+    recordRequestCategory(
+      throttlerName === 'short'
+        ? 'rate_limit_short'
+        : throttlerName === 'daily'
+          ? 'rate_limit_daily'
+          : 'rate_limit',
+    );
 
     let message = 'Demasiadas solicitudes. Intenta de nuevo más tarde.';
     let code = 'RATE_LIMIT_EXCEEDED';
