@@ -93,6 +93,21 @@ describe('authenticated origin ingress', () => {
     await request(app.getHttpServer()).get('/health?probe=ready').expect(200);
     expect(post).not.toHaveBeenCalled();
   });
+  it('rejects an unauthenticated malformed JSON body before parsing', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set('Content-Type', 'application/json')
+      .send('{"broken":')
+      .expect(403);
+    expect(res.body).toMatchObject({ code: 'ORIGIN_ACCESS_DENIED' });
+    await request(app.getHttpServer())
+      .post('/detect/ai')
+      .set(ORIGIN_AUTH_HEADER, current)
+      .set('Content-Type', 'application/json')
+      .send('{"broken":')
+      .expect(400);
+    expect(post).not.toHaveBeenCalled();
+  });
   it.each([current, previous])(
     'accepts the current or explicit rotation key',
     async (key) => {

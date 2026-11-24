@@ -49,6 +49,10 @@ describe('API dependency integration', () => {
       .mockImplementation(() => undefined);
     process.env.APP_ENV = 'test';
     process.env.ORIGIN_PROTECTION_MODE = 'disabled';
+    // This fixture deliberately represents local ingress, even on Railway CI.
+    delete process.env.RAILWAY_PROJECT_ID;
+    delete process.env.RAILWAY_ENVIRONMENT_ID;
+    delete process.env.RAILWAY_SERVICE_ID;
     process.env.CLIENT_IP_SOURCE = 'socket';
     process.env.TURNSTILE_SECRET_KEY = 'e2e-provider-secret';
     process.env.TURNSTILE_SESSION_SECRET = 'e2e-local-session-secret';
