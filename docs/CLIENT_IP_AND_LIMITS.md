@@ -10,12 +10,17 @@ to identify the security client consistently across the deployed Railway path.
 `resolveClientIp` selects one explicit source for both throttling and Turnstile
 verification/session binding:
 
-- In Railway deployments with `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` and
-  `RAILWAY_SERVICE_ID`, use the public HTTP edge's `X-Real-IP` address.
-- Otherwise use the TCP socket address and ignore all forwarding headers.
-- `CLIENT_IP_SOURCE=railway-edge` or `socket` can explicitly override selection
-  for integration tests or another deliberately configured ingress. Do not set
-  edge mode for an arbitrary untrusted reverse proxy.
+- `CLIENT_IP_SOURCE=railway-edge` explicitly opts in to trusting the public HTTP
+  edge's `X-Real-IP` address. Railway metadata never grants that trust.
+- `CLIENT_IP_SOURCE=socket` uses the TCP socket address and ignores forwarding
+  headers. This is the default outside Railway, suitable for localhost/direct HTTP.
+- On Railway, the operator must configure the mode explicitly. Missing/invalid
+  configuration fails startup before readiness; it never silently trusts headers
+  or groups all public callers into a shared socket bucket.
+- Enable edge mode only after verifying the network boundary below. A setting is
+  an operational trust decision, **not per-request authentication**. If untrusted
+  private/TCP access cannot be excluded, do not enable this mode or release this
+  candidate: first restrict ingress or add authenticated origin protection.
 - An invalid mode, absent edge address, list/duplicate or malformed address fails
   closed with 503 before provider calls. `/health` remains exempt from throttling
   for platform healthchecks that may not supply edge headers.
@@ -35,6 +40,13 @@ production and QA each have one API replica and no TCP proxy. Checking alternati
 origin exposure remains SEC-06. Local tests simulate trusted ingress; they do not
 prove Railway overwrites a header. Repeat the bounded physical QA probes after
 deployment and confirm that forged XFF/X-Real-IP/CF headers cannot reset a bucket.
+
+Release gate: inspect all services/callers in each environment and any TCP/private
+exposure before setting CLIENT_IP_SOURCE=railway-edge there. Record the result and
+configuration together; leave existing deployments untouched if that boundary is
+not established. The code does not claim to identify public ingress from the
+presence of a header or environment variables. No such variable has been added
+to QA or production as part of preparing this PR.
 
 Sources checked during the investigation:
 

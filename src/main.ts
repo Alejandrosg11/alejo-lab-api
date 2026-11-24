@@ -5,9 +5,13 @@ import { PayloadTooLargeExceptionFilter } from './common/filters/payload-too-lar
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { configureCors } from './common/configure-cors';
 import { configureRequestAudit } from './common/request-audit';
+import { validateClientIpConfiguration } from './common/client-ip';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // ConfigModule has loaded env; reject a missing Railway identity mode before
+  // healthchecks can report this deployment ready.
+  validateClientIpConfiguration();
 
   // Used by Express for protocol/host metadata, not client security identity.
   // Limits and Turnstile use the explicit public-edge/socket resolver instead.

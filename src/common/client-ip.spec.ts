@@ -61,13 +61,17 @@ describe('client security identity', () => {
       resolveClientIp(req({}, '2001:0db8:0000:0000:0000:0000:0000:0001')),
     ).toBe('2001:db8::1');
   });
-  it('selects Railway edge mode only with the full deployment identity', () => {
+  it('does not grant header trust merely because Railway metadata exists', () => {
     delete process.env.CLIENT_IP_SOURCE;
     process.env.RAILWAY_PROJECT_ID = 'fixture';
     process.env.RAILWAY_ENVIRONMENT_ID = 'fixture';
     process.env.RAILWAY_SERVICE_ID = 'fixture';
+    expect(() => resolveClientIp(req({ 'x-real-ip': '203.0.113.1' }))).toThrow(
+      'La identificación del cliente',
+    );
+    process.env.CLIENT_IP_SOURCE = 'socket';
     expect(resolveClientIp(req({ 'x-real-ip': '203.0.113.1' }))).toBe(
-      '203.0.113.1',
+      '192.0.2.1',
     );
   });
 });
