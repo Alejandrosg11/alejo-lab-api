@@ -1,5 +1,10 @@
 # Request audit and CORS
 
+SEC-05 adds independent provider attempt/completion events to cover late
+responses after HTTP disconnection and safe metadata on provider HTTP errors.
+See [provider reconciliation](PROVIDER_USAGE.md). Do not add their operation
+counts to those in HTTP audit events: they describe the same provider request.
+
 This change implements the first backend delivery of the security plan: controlled
 CORS rejections and safe request/provider diagnostics. It does not change the
 allowed origins, analysis quotas, proxy trust configuration, or Cloudflare rules.
