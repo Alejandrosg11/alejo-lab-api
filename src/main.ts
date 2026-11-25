@@ -6,6 +6,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { configureCors } from './common/configure-cors';
 import { configureRequestAudit } from './common/request-audit';
 import { validateClientIpConfiguration } from './common/client-ip';
+import { configureOriginProtection } from './common/origin-protection';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -18,6 +19,7 @@ async function bootstrap() {
   app.set('trust proxy', 1);
 
   configureRequestAudit(app);
+  configureOriginProtection(app);
   configureCors(app);
 
   app.useGlobalFilters(
