@@ -10,6 +10,7 @@ import { MulterExceptionFilter } from '../src/common/filters/multer-exception.fi
 import { PayloadTooLargeExceptionFilter } from '../src/common/filters/payload-too-large-exception.filter';
 import { configureCors } from '../src/common/configure-cors';
 import { configureRequestAudit } from '../src/common/request-audit';
+import { configureOriginProtection } from '../src/common/origin-protection';
 
 // Use real Nest, Express, Multer, file signatures, sessions and throttling.
 // Only external providers are mocked; tests never consume analysis quota.
@@ -47,6 +48,11 @@ describe('API dependency integration', () => {
       .spyOn(Logger.prototype, 'log')
       .mockImplementation(() => undefined);
     process.env.APP_ENV = 'test';
+    process.env.ORIGIN_PROTECTION_MODE = 'disabled';
+    // This fixture deliberately represents local ingress, even on Railway CI.
+    delete process.env.RAILWAY_PROJECT_ID;
+    delete process.env.RAILWAY_ENVIRONMENT_ID;
+    delete process.env.RAILWAY_SERVICE_ID;
     process.env.CLIENT_IP_SOURCE = 'socket';
     process.env.TURNSTILE_SECRET_KEY = 'e2e-provider-secret';
     process.env.TURNSTILE_SESSION_SECRET = 'e2e-local-session-secret';
@@ -60,6 +66,7 @@ describe('API dependency integration', () => {
     }).compile();
     app = moduleFixture.createNestApplication();
     configureRequestAudit(app);
+    configureOriginProtection(app);
     app.useGlobalFilters(
       new MulterExceptionFilter(),
       new PayloadTooLargeExceptionFilter(),
