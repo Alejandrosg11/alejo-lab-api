@@ -37,9 +37,28 @@ describe('API dependency integration', () => {
   function auditEvents(): Record<string, unknown>[] {
     return auditLog.mock.calls.flatMap(([message]: [unknown]) =>
       typeof message === 'string' && message.startsWith('{"event":')
-        ? [JSON.parse(message) as Record<string, unknown>]
+        ? [JSON.parse(message) as Record<string, unknown>].filter(
+            (event) => event.event === 'http_request_completed',
+          )
         : [],
     );
+  }
+
+  function providerEvents(): Record<string, unknown>[] {
+    return auditLog.mock.calls.flatMap(([message]: [unknown]) => {
+      if (typeof message !== 'string' || !message.startsWith('{"event":'))
+        return [];
+      const event = JSON.parse(message) as Record<string, unknown>;
+      return String(event.event).startsWith('provider_attempt_') ? [event] : [];
+    });
+  }
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
   }
 
   beforeEach(async () => {
@@ -362,6 +381,101 @@ describe('API dependency integration', () => {
     expect(rejected).not.toHaveProperty('providerRequestId');
     expect(rejected).not.toHaveProperty('operations');
     expect(JSON.stringify(auditEvents())).not.toContain('secret-filename');
+    expect(providerEvents()).toHaveLength(2);
+    expect(providerEvents()[1]).toMatchObject({
+      event: 'provider_attempt_completed',
+      requestId: success.headers['x-request-id'],
+      operations: 5,
+    });
+  });
+
+  it('records provider completion after the HTTP client disconnects', async () => {
+    const dispatched = deferred();
+    const releaseProvider = deferred();
+    const closed = deferred();
+    const completed = deferred();
+    auditLog.mockImplementation((message: unknown) => {
+      if (typeof message !== 'string' || !message.startsWith('{"event":'))
+        return;
+      const event = JSON.parse(message) as Record<string, unknown>;
+      if (event.event === 'http_request_completed' && event.status === 499)
+        closed.resolve();
+      if (event.event === 'provider_attempt_completed') completed.resolve();
+    });
+    post.mockImplementationOnce(async () => {
+      dispatched.resolve();
+      await releaseProvider.promise;
+      return { status: 200, data: sightengine };
+    });
+    const pending = upload().attach('image', png, 'PRIVATE_FILENAME.png');
+    pending.end(() => undefined);
+    try {
+      await dispatched.promise;
+      pending.abort();
+      await closed.promise;
+      expect(auditEvents()).toHaveLength(1);
+      expect(auditEvents()[0]).toMatchObject({
+        status: 499,
+        category: 'client_aborted',
+      });
+      expect(auditEvents()[0]).not.toHaveProperty('operations');
+      process.env.APP_ENV = 'production';
+      releaseProvider.resolve();
+      await completed.promise;
+      expect(providerEvents()).toHaveLength(2);
+      expect(providerEvents()[1]).toMatchObject({
+        event: 'provider_attempt_completed',
+        requestId: auditEvents()[0].requestId,
+        environment: 'test',
+        providerRequestId: 'simulated-analysis',
+        operations: 5,
+      });
+      expect(auditEvents()).toHaveLength(1);
+      expect(JSON.stringify(providerEvents())).not.toContain(
+        'PRIVATE_FILENAME',
+      );
+    } finally {
+      releaseProvider.resolve();
+      pending.abort();
+    }
+  });
+
+  it('records provider error metadata and keeps timeout operations unknown', async () => {
+    jest.mocked(axios.isAxiosError).mockReturnValue(true);
+    post.mockRejectedValueOnce({
+      response: {
+        status: 429,
+        data: {
+          request: { id: 'req_failure', operations: 0 },
+          api_secret: 'PRIVATE_SECRET',
+        },
+      },
+    });
+    const failure = await upload()
+      .attach('image', png, 'fixture.png')
+      .expect(400);
+    post.mockRejectedValueOnce({ code: 'ECONNABORTED' });
+    const timeout = await upload()
+      .attach('image', png, 'fixture.png')
+      .expect(503);
+    expect(
+      providerEvents().filter((e) => e.event === 'provider_attempt_completed'),
+    ).toEqual([
+      expect.objectContaining({
+        requestId: failure.headers['x-request-id'],
+        outcome: 'http_error',
+        httpStatus: 429,
+        providerRequestId: 'req_failure',
+        operations: 0,
+      }),
+      expect.objectContaining({
+        requestId: timeout.headers['x-request-id'],
+        outcome: 'timeout',
+        providerRequestId: null,
+        operations: null,
+      }),
+    ]);
+    expect(JSON.stringify(providerEvents())).not.toContain('PRIVATE_SECRET');
   });
 
   it.each([
