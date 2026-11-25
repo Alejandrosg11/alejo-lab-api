@@ -30,6 +30,10 @@ type Category =
   | 'analysis_success';
 
 type AuditContext = {
+  requestId: string;
+  environment: string;
+  method: string;
+  route: string;
   category?: Category;
   providerRequestId?: string;
   operations?: number;
@@ -37,6 +41,18 @@ type AuditContext = {
 
 const context = new AsyncLocalStorage<AuditContext>();
 const logger = new Logger('RequestAudit');
+
+// Capture identity before awaiting a provider. Its eventual completion must not
+// depend on the HTTP response still being open or on later environment changes.
+export function getRequestAuditIdentity() {
+  const current = context.getStore();
+  return {
+    requestId: current?.requestId ?? null,
+    environment: current?.environment ?? environment(),
+    method: current?.method ?? null,
+    route: current?.route ?? null,
+  };
+}
 
 export function recordRequestCategory(category: Category): void {
   const current = context.getStore();
@@ -83,7 +99,6 @@ function safeRoute(path: string): string {
 // Register before CORS so that preflights and origin rejections are visible too.
 export function configureRequestAudit(app: INestApplication): void {
   app.use((req: Request, res: Response, next: NextFunction) => {
-    const current: AuditContext = {};
     const requestId = randomUUID();
     const started = performance.now();
     const route = safeRoute(req.path);
@@ -99,6 +114,12 @@ export function configureRequestAudit(app: INestApplication): void {
       ? req.method
       : 'other';
     const appEnvironment = environment();
+    const current: AuditContext = {
+      requestId,
+      environment: appEnvironment,
+      method,
+      route,
+    };
     res.setHeader('X-Request-ID', requestId);
     let recorded = false;
     const complete = (aborted: boolean) => {

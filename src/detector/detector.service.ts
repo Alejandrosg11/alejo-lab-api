@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import FormData from 'form-data';
+import { providerUsage, startSightengineAudit } from '../common/provider-audit';
 import { SightengineGenAiResponse } from '../types';
 import {
   recordProviderUsage,
@@ -45,6 +46,7 @@ export class DetectorService {
       contentType: file.mimetype,
     });
 
+    const completeProviderAudit = startSightengineAudit();
     try {
       const response = await axios.post<SightengineGenAiResponse>(
         'https://api.sightengine.com/1.0/check.json',
@@ -57,7 +59,9 @@ export class DetectorService {
       );
 
       const data: SightengineGenAiResponse = response.data;
-      recordProviderUsage(data?.request?.id, data?.request?.operations);
+      completeProviderAudit('response', data, response.status);
+      const usage = providerUsage(data);
+      recordProviderUsage(usage.providerRequestId, usage.operations);
       const score = data?.type?.ai_generated;
       if (typeof score !== 'number') {
         recordRequestCategory('sightengine_invalid_response');
@@ -91,10 +95,20 @@ export class DetectorService {
           'Resultado probabilístico. Úsalo como señal, no como sentencia.',
       };
     } catch (error: unknown) {
-      if (error instanceof ServiceUnavailableException) throw error;
+      if (error instanceof ServiceUnavailableException) {
+        completeProviderAudit('unexpected_error'); // No-op after a response event.
+        throw error;
+      }
       if (axios.isAxiosError(error)) {
+        const usage = providerUsage(error.response?.data);
+        recordProviderUsage(usage.providerRequestId, usage.operations);
         // Timeout
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+          completeProviderAudit(
+            'timeout',
+            error.response?.data,
+            error.response?.status,
+          );
           recordRequestCategory('sightengine_timeout');
           throw new ServiceUnavailableException(
             'El servicio de análisis tardó demasiado en responder. Intenta de nuevo.',
@@ -102,6 +116,11 @@ export class DetectorService {
         }
 
         const status = error.response?.status;
+        completeProviderAudit(
+          error.response ? 'http_error' : 'network_error',
+          error.response?.data,
+          status,
+        );
 
         // Errores del proveedor (4xx/5xx)
         if (typeof status === 'number') {
@@ -152,6 +171,7 @@ export class DetectorService {
       }
 
       // Fallback general
+      completeProviderAudit('unexpected_error');
       recordRequestCategory('sightengine_unavailable');
       throw new ServiceUnavailableException('No se pudo analizar la imagen.');
     }
