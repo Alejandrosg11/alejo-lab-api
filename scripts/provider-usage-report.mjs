@@ -76,6 +76,12 @@ export function reconcile(providerRows, events, from, to) {
   };
   for (const event of events) {
     if (
+      (event.providerRequestId != null && !safeId(event.providerRequestId)) ||
+      (event.operations != null && !operationCount(event.operations))
+    ) {
+      throw Error('Invalid audit provider metadata.');
+    }
+    if (
       !utc(event.timestamp) ||
       ![
         'http_request_completed',

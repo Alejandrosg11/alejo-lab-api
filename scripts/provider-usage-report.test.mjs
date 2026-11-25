@@ -136,3 +136,26 @@ test('rejects invalid metadata without echoing untrusted values', () => {
   );
   assert.throws(() => reconcile([row], [], to, from));
 });
+
+test('rejects malformed audit metadata rather than silently hiding evidence', () => {
+  for (const bad of [
+    { ...event, providerRequestId: 'PRIVATE\nINJECTION' },
+    ...[-1, 1.5, '5', Infinity, Number.MAX_SAFE_INTEGER + 1].map(
+      (operations) => ({ ...event, operations }),
+    ),
+  ]) {
+    assert.throws(
+      () => reconcile([row], [bad], from, to),
+      /Invalid audit provider metadata/,
+    );
+  }
+  assert.equal(
+    reconcile(
+      [row],
+      [{ ...event, providerRequestId: null, operations: null }],
+      from,
+      to,
+    ).unmatched.length,
+    1,
+  );
+});
